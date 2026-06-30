@@ -7,9 +7,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class InventoryEventProducer {
 
-    private final KafkaTemplate<String, InventoryProcessedEvent> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    public InventoryEventProducer(KafkaTemplate<String, InventoryProcessedEvent> kafkaTemplate) {
+    public InventoryEventProducer(KafkaTemplate<String, Object> kafkaTemplate) {
         this.kafkaTemplate = kafkaTemplate;
     }
 
