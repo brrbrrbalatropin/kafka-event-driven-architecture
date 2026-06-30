@@ -1,5 +1,13 @@
 # Laboratory Activity: Event-Driven Architecture with Apache Kafka
 
+Colombian School of Engineering Julio Garavito
+
+Software Architectures
+
+Diego Alejandro Montes
+
+David Felipe Rayo
+
 ## Introduction and Context
 This project explores the implementation of an event-driven architecture focused on high performance, microservices decoupling, and reliable message processing. In modern software systems, it is crucial to handle large volumes of events without losing critical data, keeping services independent. We use Apache Kafka as the main event streaming platform to achieve this decoupling between producers and consumers. The central scenario revolves around an e-commerce system that processes orders, payments, and inventory reservations asynchronously. Ensuring that each order is correctly processed in parallel by multiple domains is the main challenge of this architecture.
 
