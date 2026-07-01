@@ -1,53 +1,158 @@
-# Laboratory Activity: Event-Driven Architecture with Apache Kafka
+# Event-Driven Architecture with Apache Kafka
 
-Colombian School of Engineering Julio Garavito
+**Colombian School of Engineering Julio Garavito — Software Architectures (ARSW)**
 
-Software Architectures
+Authors: Diego Alejandro Montes · David Felipe Rayo
 
-Diego Alejandro Montes
+A small e-commerce lab that shows the **choreography** pattern with Apache Kafka: a single
+web request to create an order fans out into independent **payment** and **inventory**
+processing, fully decoupled through topics.
 
-David Felipe Rayo
+---
 
-## Introduction and Context
-This project explores the implementation of an event-driven architecture focused on high performance, microservices decoupling, and reliable message processing. In modern software systems, it is crucial to handle large volumes of events without losing critical data, keeping services independent. We use Apache Kafka as the main event streaming platform to achieve this decoupling between producers and consumers. The central scenario revolves around an e-commerce system that processes orders, payments, and inventory reservations asynchronously. Ensuring that each order is correctly processed in parallel by multiple domains is the main challenge of this architecture.
+## What it does
 
-## Detailed Requirements
-The instructions for this laboratory activity required the creation of a distributed messaging architecture using the choreography pattern. It required implementing an order producer service and multiple logical consumer services for payments and inventory interacting through dedicated topics. The independence of these components ensures that the system can continue accepting orders even if the inventory or payments system is temporarily offline.
+```mermaid
+flowchart LR
+    Client -- POST /orders --> API[OrderController]
+    API -- OrderCreatedEvent --> T1[(topic: orders)]
+    T1 --> PC[PaymentEventConsumer\ngroup: payment-service]
+    T1 --> IC[InventoryEventConsumer\ngroup: inventory-service]
+    PC -- PaymentProcessedEvent --> T2[(topic: payments)]
+    IC -- InventoryProcessedEvent --> T3[(topic: inventory)]
+```
 
-We developed these applications using Java and Spring Boot. The producer is responsible for receiving web requests and immediately publishing an order created event. The consumer applications must read these events in real time, execute their business logic, such as approving a payment based on the amount, and publish the result to their respective payments and inventory topics. Finally, the activity required applying error recovery strategies, such as the use of dead letter topics, to ensure that no message blocks the system and that financial and inventory data are not lost.
+1. `POST /orders` publishes an `OrderCreatedEvent` to the **`orders`** topic (keyed by `orderId`).
+2. Two consumer groups read every order in parallel (publish–subscribe):
+   - **`payment-service`** decides `APPROVED` / `REJECTED` and publishes to **`payments`**.
+   - **`inventory-service`** decides `RESERVED` / `REJECTED` and publishes to **`inventory`**.
 
-## Implementation Strategy
-The implementation was executed in three distinct and sequential phases to ensure an organized workflow.
+Using `orderId` as the partition key guarantees that all events for the same order are
+processed in order within a partition.
 
-The first phase consisted of configuring the infrastructure using a containerized environment with Docker Compose. We deployed a Kafka cluster in a standalone (Kraft/no external coordinator) mode along with a graphical interface to inspect events in real time.
+## Tech stack
 
-The second phase focused on writing the logic for the Java applications using the Spring framework for Kafka. We built the complete flow by defining data transfer object classes for the events and using Kafka templates for message publishing. Simultaneously, we built the consumers using Kafka listener annotations, assigning each a distinct group identifier (payments service and inventory service), so that both receive their own copy of the order created event under the publish-subscribe pattern.
+- Java 21, Spring Boot 4.1, Spring for Apache Kafka
+- Apache Kafka 3.7 in **KRaft** mode (no ZooKeeper), via Docker Compose
+- [provectuslabs/kafka-ui](https://github.com/provectus/kafka-ui) for visual inspection
+- Maven (wrapper included: `./mvnw`)
 
-The third phase consisted of testing the resilience and behavior of the system. Through web requests, we sent simulated orders with different values and monitored in the user interface how a single web event branched into multiple asynchronous events processed by different consumer groups, thus validating the eventual consistency of the data.
+## Project structure
 
-## Design Decisions
-Apache Kafka was selected due to its ability to handle immutable log-based messaging, allowing for message retention and reprocessing in case of failures. We used Spring for Kafka because it offers a straightforward, declarative approach for operations, avoiding the complexity of manually configuring low-level clients.
+```
+src/main/java/edu/eci/arsw/kafka/
+├── KafkaLabApplication.java          # Spring Boot entry point
+├── config/
+│   ├── KafkaTopicConfig.java         # Declares topics orders/payments/inventory (3 partitions)
+│   └── KafkaProducerConfig.java      # KafkaTemplate<String,Object> + Java 8 time support
+├── controller/
+│   └── OrderController.java          # POST /orders
+├── producer/
+│   ├── OrderEventProducer.java       # -> orders
+│   ├── PaymentEventProducer.java     # -> payments
+│   └── InventoryEventProducer.java   # -> inventory
+├── consumer/
+│   ├── PaymentEventConsumer.java     # listens orders, group payment-service
+│   └── InventoryEventConsumer.java   # listens orders, group inventory-service
+└── dto/                              # Event and request payloads
+docker-compose.yml                    # Kafka broker + Kafka UI
+```
 
-A key architectural decision was to reject the use of a single global events topic to avoid the firehose anti-pattern, where consumers wake up unnecessarily to discard messages that do not belong to them. Instead, we isolated the events in dedicated topics for orders, payments, and inventory. Additionally, we established the order identifier as the partitioning key for all events, ensuring that all occurrences of the same order are processed in strict sequential order within the same partition.
+## Topics & business rules
 
-## Evidence and Execution
+| Topic       | Partitions | Produced by            | Rule |
+|-------------|-----------:|------------------------|------|
+| `orders`    | 3          | `OrderController`      | — (every request) |
+| `payments`  | 3          | `PaymentEventConsumer` | `total <= 250000` → `APPROVED`, else `REJECTED` |
+| `inventory` | 3          | `InventoryEventConsumer` | `total <= 300000` → `RESERVED`, else `REJECTED` |
 
-### 1. Stand Up the Infrastructure
-To start Kafka and its graphical interface, open your console and run the command to start Docker Compose in the project root, making sure you have Docker running.
-Command: `docker compose up -d`
-Once started, the interface will be available on local port 8080.
+## Prerequisites
 
-### 2. Run the Spring Boot Application
-With the infrastructure ready, run the Java application making sure you have Java 21 and Maven installed.
-Command: `mvn spring-boot:run`
+- **JDK 21** (the project targets Java 21)
+- **Docker** running (for Kafka + Kafka UI)
+- Maven — or just use the bundled `./mvnw` wrapper
 
-### 3. Generate Producer Events in Action
-You can send a new order to the system via a creation request through the command terminal to observe the system in real time by sending a customer identifier and a numerical total value to port 8081 on the orders path.
-Command: `curl -X POST http://localhost:8081/orders -H "Content-Type: application/json" -d '{"customerId":"CUS01","total":120000}'`
+## How to run
 
-### 4. Consumption and Choreography Verification
-Once the command is sent, in the application console you will see the reception and processing of the events with approved and reserved status.
+### 1. Start the infrastructure
 
-In the Kafka graphical interface, you can visually inspect the following:
-Topics: Verify that messages exist in the orders, payments, and inventory topics.
-Consumers: You will be able to observe the payments service and inventory service groups successfully consuming events, demonstrating successful and completely decoupled real-time processing.
+```bash
+docker compose up -d
+```
+
+This launches:
+- **Kafka broker** on `localhost:9092`
+- **Kafka UI** on http://localhost:8080
+
+### 2. Start the application
+
+```bash
+./mvnw spring-boot:run
+```
+
+On Windows PowerShell: `.\mvnw spring-boot:run`
+
+The app starts on **`localhost:8081`**. On startup it creates the three topics and both
+consumer groups begin listening on `orders`.
+
+### 3. Send an order
+
+```bash
+curl -X POST http://localhost:8081/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"CUS01","total":120000}'
+```
+
+Response (`201 Created`):
+
+```json
+{ "orderId": "ORD-…", "customerId": "CUS01", "total": 120000,
+  "status": "CREATED", "occurredAt": "…" }
+```
+
+In the application console you will see both consumers react:
+
+```
+Evento procesado en inventory-service para orden: ORD-… -> RESERVED
+Evento procesado en payment-service  para orden: ORD-… -> APPROVED
+```
+
+Try different totals to see the branches (e.g. `total: 280000` → payment `REJECTED`,
+inventory `RESERVED`; `total: 400000` → both `REJECTED`).
+
+### 4. Verify in Kafka UI
+
+Open http://localhost:8080 → cluster **arsw-local**:
+- **Topics:** inspect messages in `orders`, `payments`, and `inventory`.
+- **Consumers:** the `payment-service` and `inventory-service` groups consuming `orders`.
+
+## Endpoints
+
+| Method | Path      | Body                                | Description |
+|--------|-----------|-------------------------------------|-------------|
+| `POST` | `/orders` | `{ "customerId": "...", "total": n }` | Creates an order and publishes `OrderCreatedEvent` |
+
+## Configuration notes
+
+- **`spring-boot-starter-kafka`** (not raw `spring-kafka`) is required: in Spring Boot 4 the
+  Kafka auto-configuration lives in the `spring-boot-kafka` module that the starter pulls in.
+  It provides the `KafkaAdmin` (which creates the declared topics), the consumer factories
+  (so `@KafkaListener` works), and the default `KafkaTemplate`.
+- **`KafkaProducerConfig`** defines an explicit `KafkaTemplate<String, Object>` (the value type
+  the producers use) whose JSON serializer registers `JavaTimeModule`, so `Instant` fields
+  serialize as ISO-8601. `jackson-datatype-jsr310` is on the classpath for the same reason.
+- **Docker listeners:** the broker advertises two listeners — `PLAINTEXT_HOST://localhost:9092`
+  for apps running on the host, and `INTERNAL://kafka:29092` for other containers. Kafka UI
+  connects through the internal one (`kafka:29092`); if it used `localhost`, it would resolve
+  to its own container and never reach the broker.
+
+## Troubleshooting
+
+- **Kafka UI stuck loading / cluster offline:** make sure the broker advertises the internal
+  listener (`INTERNAL://kafka:29092`) and Kafka UI points at `kafka:29092`.
+- **`No qualifying bean of type KafkaTemplate<String, Object>`:** the `spring-boot-starter-kafka`
+  dependency or `KafkaProducerConfig` is missing.
+- **Topics not created on startup:** usually means the Kafka auto-configuration is absent —
+  check that the `spring-boot-starter-kafka` dependency is present.
+- **Fresh start:** `docker compose down` removes the broker (no volume), so topics are recreated
+  on the next app startup.
